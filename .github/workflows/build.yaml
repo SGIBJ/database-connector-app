@@ -15,7 +15,6 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write
-
     env:
       CONNECTOR_REF: ${{ github.event.client_payload.ref || inputs.branch }}
       CONNECTOR_SHA: ${{ github.event.client_payload.sha || '' }}
