@@ -53,14 +53,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install pkg
-        run: npm install -g @yao-pkg/pkg
-
       - name: Build and package to executable
         run: |
           pnpm run build
           pnpm run build:bundle
-          pkg dist/bundled/index.js --target node24-win-x64 --output release/database-connector.exe
+          pnpm dlx @yao-pkg/pkg dist/bundled/index.js --target node24-win-x64 --output release/database-connector.exe
 
       - name: Create batch file to run .exe
         shell: powershell
@@ -84,7 +81,6 @@ jobs:
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
-        if: github.event_name == 'repository_dispatch'
         with:
           tag_name: database-connector-deploy-${{ github.run_number }}
           name: Database Connector - Windows Release ${{ github.run_number }}
