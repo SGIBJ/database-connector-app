@@ -1,0 +1,83 @@
+name: On Database Connector Deploy
+
+on:
+  repository_dispatch:
+    types: [database-connector-deploy]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch or SHA to build (for manual triggers)"
+        required: true
+        default: "main"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      packages: write
+
+    env:
+      CONNECTOR_REF: ${{ github.event.client_payload.ref || inputs.branch }}
+      CONNECTOR_SHA: ${{ github.event.client_payload.sha || '' }}
+      TRIGGERED_BY: ${{ github.event.client_payload.triggered_by || github.actor }}
+
+    steps:
+      # Checkout the private repository using your PAT secret
+      - name: Checkout database-connector repo
+        uses: actions/checkout@v4
+        with:
+          repository: SGIBJ/database-connector
+          token: ${{ secrets.GH_PAT }}
+          ref: ${{ env.CONNECTOR_SHA != '' && env.CONNECTOR_SHA || env.CONNECTOR_REF }}
+
+      - name: Setup Node.js (matches local v24.19.0)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.19.0"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install pkg
+        run: npm install -g pkg
+
+      - name: Build and package to executable
+        run: |
+          npm run build
+          pkg --target node24-win-x64 --out-path dist .
+
+      - name: Create batch file to run .exe
+        shell: powershell
+        run: |
+          $exeFile = Get-ChildItem -Path "dist" -Filter "*.exe" | Select-Object -First 1
+          $batContent = "@echo off`r`n"
+          $batContent += "cd /d `%~dp0`r`n"
+          $batContent += "`"$($exeFile.Name)`"`r`n"
+          $batContent += "pause`r`n"
+          $batContent | Out-File -FilePath "run.bat" -Encoding UTF8
+
+      - name: Create release artifacts zip
+        shell: powershell
+        run: |
+          $releaseName = "database-connector-${{ github.run_number }}-${{ github.sha }}-windows"
+          $zipPath = "${releaseName}.zip"
+
+          Compress-Archive -Path "dist\*.exe", "run.bat" -DestinationPath $zipPath -Force
+
+          echo "RELEASE_ZIP=$zipPath" \vert{} Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "RELEASE_NAME=$releaseName" \vert{} Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: github.event_name == 'repository_dispatch'
+        with:
+          tag_name: database-connector-deploy-${{ github.run_number }}
+          name: Database Connector - Windows Release ${{ github.run_number }}
+          generate_release_notes: true
+          files: ${{ env.RELEASE_ZIP }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
