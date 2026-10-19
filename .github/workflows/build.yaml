@@ -14,8 +14,7 @@ jobs:
   build:
     runs-on: windows-latest
     permissions:
-      contents: read
-      packages: write
+      contents: write # needed to create the release with github.token
 
     env:
       CONNECTOR_REF: ${{ github.event.client_payload.ref || inputs.branch }}
@@ -23,12 +22,21 @@ jobs:
       TRIGGERED_BY: ${{ github.event.client_payload.triggered_by || github.actor }}
 
     steps:
-      # Checkout the private repository using your PAT secret
+      - name: Generate App token (private repo, read-only)
+        id: app
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: SGIBJ
+          repositories: database-connector
+          permission-contents: read
+
       - name: Checkout database-connector repo
         uses: actions/checkout@v4
         with:
           repository: SGIBJ/database-connector
-          token: ${{ secrets.GH_PAT }}
+          token: ${{ steps.app.outputs.token }}
           ref: ${{ env.CONNECTOR_SHA != '' && env.CONNECTOR_SHA || env.CONNECTOR_REF }}
 
       - name: Setup Node.js (matches local v24.19.0)
@@ -66,8 +74,8 @@ jobs:
 
           Compress-Archive -Path "dist\*.exe", "run.bat" -DestinationPath $zipPath -Force
 
-          echo "RELEASE_ZIP=$zipPath" \vert{} Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "RELEASE_NAME=$releaseName" \vert{} Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "RELEASE_ZIP=$zipPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "RELEASE_NAME=$releaseName" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -80,4 +88,4 @@ jobs:
           draft: false
           prerelease: false
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_TOKEN: ${{ github.token }}
