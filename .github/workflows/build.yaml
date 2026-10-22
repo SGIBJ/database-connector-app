@@ -53,28 +53,51 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build and package to executable
+      - name: Generate build info
+        id: build-info
+        # Publishes BUILD_NUMBER (YYYYMMDD-N) as a step output. The script is
+        # idempotent within a run, so the later `pnpm run build` reuses the
+        # same number and the tag always matches what is compiled in.
+        run: pnpm run build:info:ci
+
+      - name: Build and package the payload
         run: |
           pnpm run build
           pnpm run build:bundle
-          pnpm dlx @yao-pkg/pkg dist/bundled/index.js --target node24-win-x64 --output release/database-connector.exe
+          # pkg appends .exe to the output path on Windows, so ask it for an
+          # extensionless name and rename the result below.
+          pnpm dlx @yao-pkg/pkg dist/bundled/index.js --target node24-win-x64 --output release/database-connector
+          Move-Item -Force "release\database-connector.exe" "release\database-connector.bin"
+          if (-not (Test-Path "release\database-connector.bin")) {
+            throw "Payload was not produced; expected release\database-connector.bin"
+          }
 
-      - name: Create batch file to run .exe
+      - name: Create batch file to run the .bin
         shell: powershell
         run: |
+          # The payload is named .bin on purpose: a .exe invites a
+          # double-click, and an unsigned exe opened that way triggers the
+          # Windows SmartScreen "Windows protected your PC" warning. A .bin
+          # is not directly executable from Explorer, so the user runs it
+          # through this batch file, which launches it via cmd (CreateProcess)
+          # and therefore skips the SmartScreen check.
+          #
+          # %~dp0 is quoted because it expands to the install path, which can
+          # contain spaces. The file is written as ASCII without a BOM: cmd.exe
+          # chokes on a UTF-8 BOM at the start of a batch file.
           $batContent = "@echo off`r`n"
-          $batContent += "cd /d `%~dp0`r`n"
-          $batContent += "`"database-connector.exe`"`r`n"
+          $batContent += "cd /d `"%~dp0`"`r`n"
+          $batContent += "`"database-connector.bin`"`r`n"
           $batContent += "pause`r`n"
-          $batContent | Out-File -FilePath "run.bat" -Encoding UTF8
+          [System.IO.File]::WriteAllText("run.bat", $batContent, [System.Text.Encoding]::ASCII)
 
       - name: Create release artifacts zip
         shell: powershell
         run: |
-          $releaseName = "database-connector-${{ github.run_number }}-${{ github.sha }}-windows"
+          $releaseName = "database-connector-${{ steps.build-info.outputs.BUILD_NUMBER }}-${{ github.sha }}-windows"
           $zipPath = "${releaseName}.zip"
 
-          Compress-Archive -Path "release\*.exe", "run.bat" -DestinationPath $zipPath -Force
+          Compress-Archive -Path "release\*.bin", "run.bat" -DestinationPath $zipPath -Force
 
           echo "RELEASE_ZIP=$zipPath" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "RELEASE_NAME=$releaseName" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -82,8 +105,11 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: database-connector-deploy-${{ github.run_number }}
-          name: Database Connector - Windows Release ${{ github.run_number }}
+          # Tag suffix MUST equal the build number compiled into the payload,
+          # because the updater compares the embedded number against the
+          # version at the end of the latest release tag.
+          tag_name: database-connector-deploy-${{ steps.build-info.outputs.BUILD_NUMBER }}
+          name: Database Connector - Windows Release ${{ steps.build-info.outputs.BUILD_NUMBER }}
           generate_release_notes: true
           files: ${{ env.RELEASE_ZIP }}
           draft: false
