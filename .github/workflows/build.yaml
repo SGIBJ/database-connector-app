@@ -66,7 +66,10 @@ jobs:
           pnpm run build:bundle
           # pkg appends .exe to the output path on Windows, so ask it for an
           # extensionless name and rename the result below.
-          pnpm dlx @yao-pkg/pkg dist/bundled/index.js --target node24-win-x64 --output release/database-connector
+          # --config package.json reads its "pkg.assets": node-datachannel is
+          # kept out of the ncc bundle (its native binary is required by a
+          # runtime-computed name), so pkg has to pack the package itself.
+          pnpm dlx @yao-pkg/pkg dist/bundled/index.js --config package.json --target node24-win-x64 --output release/database-connector
           Move-Item -Force "release\database-connector.exe" "release\database-connector.bin"
           if (-not (Test-Path "release\database-connector.bin")) {
             throw "Payload was not produced; expected release\database-connector.bin"
